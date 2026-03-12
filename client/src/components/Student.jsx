@@ -90,26 +90,25 @@ export default function Student() {
     };
 
     const startDrawing = (e) => {
-        // Prevent default browser actions
+        // Prevent default browser actions (scrolling, zooming, etc.)
         if (e.target === canvasRef.current && e.cancelable) {
             e.preventDefault();
         }
 
         const isPen = e.pointerType === 'pen' || e.pointerType === 'stylus';
 
-        // Ignore if we are already drawing with another pointer, UNLESS it's a pen taking over
+        // If already drawing with another pointer, only let a pen take over
         if (isDrawing.current && activePointerId.current !== null && e.pointerId !== activePointerId.current) {
             if (!isPen) {
                 return;
             }
+            // Pen is taking over — reset state first
+            isDrawing.current = false;
+            activePointerId.current = null;
         }
 
         if (e.pointerId !== undefined) {
             activePointerId.current = e.pointerId;
-            // Only capture pointer for Pen to prevent iOS Safari quirks with fingers
-            if (isPen) {
-                try { e.target.setPointerCapture(e.pointerId); } catch (err) { }
-            }
         }
 
         const { x, y } = getCoordinates(e);
@@ -168,13 +167,7 @@ export default function Student() {
         }
 
         isDrawing.current = false;
-
-        if (e.pointerId !== undefined) {
-            if (e.pointerType === 'pen' || e.pointerType === 'stylus') {
-                try { e.target.releasePointerCapture(e.pointerId); } catch (err) { }
-            }
-            activePointerId.current = null;
-        }
+        activePointerId.current = null;
 
         const { x, y } = getCoordinates(e);
         emitDrawEvent('end', { x, y });
@@ -284,7 +277,7 @@ export default function Student() {
                 onPointerDown={startDrawing}
                 onPointerMove={draw}
                 onPointerUp={stopDrawing}
-                onPointerOut={stopDrawing}
+                onPointerLeave={stopDrawing}
                 onPointerCancel={stopDrawing}
             />
         </div>
