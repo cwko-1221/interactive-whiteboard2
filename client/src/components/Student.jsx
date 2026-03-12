@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import { Pen, Eraser, Trash2 } from 'lucide-react';
@@ -17,10 +17,16 @@ export default function Student() {
     const [activeTool, setActiveTool] = useState('pen'); // 'pen' | 'eraser'
     const isDrawing = useRef(false);
     const activePointerId = useRef(null);
+    const activeToolRef = useRef(activeTool);
 
     const canvasRef = useRef(null);
     const contextRef = useRef(null);
     const socketRef = useRef(null);
+    const joinedRef = useRef(false);
+
+    // Keep refs in sync with state
+    useEffect(() => { activeToolRef.current = activeTool; }, [activeTool]);
+    useEffect(() => { joinedRef.current = joined; }, [joined]);
 
     // Initialize Socket and Canvas context when joined
     useEffect(() => {
@@ -63,127 +69,136 @@ export default function Student() {
         }
     }, [joined, roomId, name]);
 
-    const getCoordinates = (e) => {
+    const getCoordinates = useCallback((e) => {
         if (!canvasRef.current) return { x: 0, y: 0 };
-
-        const canvas = canvasRef.current;
-        const rect = canvas.getBoundingClientRect();
-
+        const rect = canvasRef.current.getBoundingClientRect();
         return {
             x: (e.clientX - rect.left) / rect.width,
             y: (e.clientY - rect.top) / rect.height
         };
-    };
+    }, []);
 
-    const setupContextMode = () => {
+    const setupContextMode = useCallback(() => {
         const ctx = contextRef.current;
         if (!ctx) return;
 
-        if (activeTool === 'eraser') {
+        if (activeToolRef.current === 'eraser') {
             ctx.globalCompositeOperation = 'destination-out';
-            ctx.lineWidth = 20; // Eraser size
+            ctx.lineWidth = 20;
         } else {
             ctx.globalCompositeOperation = 'source-over';
-            ctx.strokeStyle = '#000000'; // Default black pen
+            ctx.strokeStyle = '#000000';
             ctx.lineWidth = 3;
         }
-    };
+    }, []);
 
-    const startDrawing = (e) => {
-        // Prevent default browser actions (scrolling, zooming, etc.)
-        if (e.target === canvasRef.current && e.cancelable) {
-            e.preventDefault();
-        }
-
-        const isPen = e.pointerType === 'pen' || e.pointerType === 'stylus';
-
-        // If already drawing with another pointer, only let a pen take over
-        if (isDrawing.current && activePointerId.current !== null && e.pointerId !== activePointerId.current) {
-            if (!isPen) {
-                return;
-            }
-            // Pen is taking over — reset state first
-            isDrawing.current = false;
-            activePointerId.current = null;
-        }
-
-        if (e.pointerId !== undefined) {
-            activePointerId.current = e.pointerId;
-        }
-
-        const { x, y } = getCoordinates(e);
-        isDrawing.current = true;
-
-        const ctx = contextRef.current;
-        if (ctx) {
-            ctx.beginPath();
-            const rect = canvasRef.current.getBoundingClientRect();
-            const localX = x * rect.width;
-            const localY = y * rect.height;
-
-            setupContextMode();
-            ctx.moveTo(localX, localY);
-        }
-
-        emitDrawEvent('start', { x, y });
-    };
-
-    const draw = (e) => {
-        if (!isDrawing.current) return;
-
-        // Only respond to the tracked pointer
-        if (e.pointerId !== undefined && activePointerId.current !== null && e.pointerId !== activePointerId.current) {
-            return;
-        }
-
-        if (e.target === canvasRef.current && e.cancelable) {
-            e.preventDefault();
-        }
-
-        const { x, y } = getCoordinates(e);
-
-        const ctx = contextRef.current;
-        if (ctx) {
-            const rect = canvasRef.current.getBoundingClientRect();
-            const localX = x * rect.width;
-            const localY = y * rect.height;
-            ctx.lineTo(localX, localY);
-            ctx.stroke();
-        }
-
-        emitDrawEvent('move', { x, y });
-    };
-
-    const stopDrawing = (e) => {
-        if (!isDrawing.current) return;
-
-        // Only stop if the event comes from the tracked pointer
-        if (e.pointerId !== undefined && activePointerId.current !== null && e.pointerId !== activePointerId.current) {
-            return;
-        }
-
-        if (e.target === canvasRef.current && e.cancelable) {
-            e.preventDefault();
-        }
-
-        isDrawing.current = false;
-        activePointerId.current = null;
-
-        const { x, y } = getCoordinates(e);
-        emitDrawEvent('end', { x, y });
-    };
-
-    const emitDrawEvent = (state, point) => {
-        if (socketRef.current && joined) {
+    const emitDrawEvent = useCallback((state, point) => {
+        if (socketRef.current && joinedRef.current) {
             socketRef.current.emit('draw', {
                 ...point,
                 state,
                 color: '#000000',
-                size: activeTool === 'eraser' ? 10 : 1.5,
-                isEraser: activeTool === 'eraser'
+                size: activeToolRef.current === 'eraser' ? 10 : 1.5,
+                isEraser: activeToolRef.current === 'eraser'
             });
         }
-    };
+    }, []);
+
+    // ── Native event listeners for reliable iPad pen input ──
+    // React's synthetic events can delay preventDefault(), causing iPadOS Safari
+    // to claim the gesture (scroll/zoom) before our handler runs.
+    // Using addEventListener with { passive: false } ensures we block the
+    // browser's gesture recognizer immediately on the first pointerdown.
+    useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+
+        const handlePointerDown = (e) => {
+            // Always prevent default immediately to stop Safari gesture recognition
+            if (e.cancelable) e.preventDefault();
+
+            const isPen = e.pointerType === 'pen' || e.pointerType === 'stylus';
+
+            // If already drawing with another pointer, only let a pen take over
+            if (isDrawing.current && activePointerId.current !== null && e.pointerId !== activePointerId.current) {
+                if (!isPen) return;
+                isDrawing.current = false;
+                activePointerId.current = null;
+            }
+
+            activePointerId.current = e.pointerId;
+            isDrawing.current = true;
+
+            const { x, y } = getCoordinates(e);
+
+            const ctx = contextRef.current;
+            if (ctx) {
+                ctx.beginPath();
+                const rect = canvas.getBoundingClientRect();
+                setupContextMode();
+                ctx.moveTo(x * rect.width, y * rect.height);
+            }
+
+            emitDrawEvent('start', { x, y });
+        };
+
+        const handlePointerMove = (e) => {
+            if (!isDrawing.current) return;
+            if (e.pointerId !== undefined && activePointerId.current !== null && e.pointerId !== activePointerId.current) return;
+
+            if (e.cancelable) e.preventDefault();
+
+            const { x, y } = getCoordinates(e);
+
+            const ctx = contextRef.current;
+            if (ctx) {
+                const rect = canvas.getBoundingClientRect();
+                ctx.lineTo(x * rect.width, y * rect.height);
+                ctx.stroke();
+            }
+
+            emitDrawEvent('move', { x, y });
+        };
+
+        const handlePointerUp = (e) => {
+            if (!isDrawing.current) return;
+            if (e.pointerId !== undefined && activePointerId.current !== null && e.pointerId !== activePointerId.current) return;
+
+            if (e.cancelable) e.preventDefault();
+
+            isDrawing.current = false;
+            activePointerId.current = null;
+
+            const { x, y } = getCoordinates(e);
+            emitDrawEvent('end', { x, y });
+        };
+
+        // Block Safari's gesture recognizer at the touch level too
+        const handleTouchStart = (e) => {
+            // Only prevent default if a single touch (pen or finger drawing),
+            // don't block multi-touch (pinch zoom if needed later)
+            if (e.touches.length === 1 && e.cancelable) {
+                e.preventDefault();
+            }
+        };
+
+        // All listeners MUST be { passive: false } so preventDefault() works on iOS
+        canvas.addEventListener('pointerdown', handlePointerDown, { passive: false });
+        canvas.addEventListener('pointermove', handlePointerMove, { passive: false });
+        canvas.addEventListener('pointerup', handlePointerUp, { passive: false });
+        canvas.addEventListener('pointerleave', handlePointerUp, { passive: false });
+        canvas.addEventListener('pointercancel', handlePointerUp, { passive: false });
+        canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
+
+        return () => {
+            canvas.removeEventListener('pointerdown', handlePointerDown);
+            canvas.removeEventListener('pointermove', handlePointerMove);
+            canvas.removeEventListener('pointerup', handlePointerUp);
+            canvas.removeEventListener('pointerleave', handlePointerUp);
+            canvas.removeEventListener('pointercancel', handlePointerUp);
+            canvas.removeEventListener('touchstart', handleTouchStart);
+        };
+    }, [joined, getCoordinates, setupContextMode, emitDrawEvent]);
 
     const clearCanvas = () => {
         const ctx = contextRef.current;
@@ -270,15 +285,10 @@ export default function Student() {
                 </button>
             </div>
 
-            {/* Canvas */}
+            {/* Canvas — event listeners attached natively via useEffect above */}
             <canvas
                 ref={canvasRef}
                 className={styles.canvas}
-                onPointerDown={startDrawing}
-                onPointerMove={draw}
-                onPointerUp={stopDrawing}
-                onPointerLeave={stopDrawing}
-                onPointerCancel={stopDrawing}
             />
         </div>
     );
