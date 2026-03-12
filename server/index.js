@@ -13,13 +13,14 @@ const io = new Server(server, {
         origin: '*',
         methods: ['GET', 'POST'],
     },
+    maxHttpBufferSize: 10 * 1024 * 1024, // 10 MB for image uploads
 });
 
-const rooms = new Map(); // roomId -> { teacherSocket, students: Map<socketId, name> }
+const rooms = new Map(); // roomId -> { teacherSocket, students: Map<socketId, name>, image: string|null }
 
 function getRoom(roomId) {
     if (!rooms.has(roomId)) {
-        rooms.set(roomId, { teacherSocket: null, students: new Map() });
+        rooms.set(roomId, { teacherSocket: null, students: new Map(), image: null });
     }
     return rooms.get(roomId);
 }
@@ -58,6 +59,11 @@ io.on('connection', (socket) => {
             room.students.set(socket.id, name);
             // Notify teacher about updated roster
             emitStudentList(roomId);
+
+            // If the room has an image, send it to the new student
+            if (room.image) {
+                socket.emit('room-image', room.image);
+            }
         }
 
         socket.to(roomId).emit('user-joined', { name, isTeacher });
@@ -91,6 +97,22 @@ io.on('connection', (socket) => {
         const roomId = socket.data.roomId;
         if (roomId) {
             io.to(roomId).emit('clear-board');
+        }
+    });
+
+    // Handle teacher uploading an image (base64)
+    socket.on('upload-image', (imageData) => {
+        const roomId = socket.data.roomId;
+        if (roomId && socket.data.isTeacher) {
+            const room = rooms.get(roomId);
+            if (room) {
+                room.image = imageData;
+                // Broadcast image to all students in the room
+                socket.to(roomId).emit('room-image', imageData);
+                // Confirm to teacher
+                socket.emit('image-uploaded', true);
+                console.log(`Image uploaded for room ${roomId} (${Math.round(imageData.length / 1024)}KB)`);
+            }
         }
     });
 

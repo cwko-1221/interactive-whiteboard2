@@ -10,6 +10,11 @@ export default function Home() {
         navigate(`/teacher?room=${roomId}`);
     };
 
+    const createClassRoom = () => {
+        const roomId = Math.random().toString(36).substring(2, 8).toUpperCase();
+        navigate(`/class-teacher?room=${roomId}`);
+    };
+
     const joinRoom = (e) => {
         e.preventDefault();
         if (joinCode.trim()) {
@@ -27,6 +32,9 @@ export default function Home() {
                     <p style={styles.desc}>Start a new whiteboard session for your class.</p>
                     <button style={styles.btnPrimary} onClick={createRoom}>
                         Create New Room
+                    </button>
+                    <button style={styles.btnClass} onClick={createClassRoom}>
+                        📄 Class Module
                     </button>
                 </div>
 
@@ -90,6 +98,17 @@ const styles = {
     },
     btnPrimary: {
         backgroundColor: '#3b82f6',
+        color: 'white',
+        padding: '0.75rem',
+        borderRadius: '8px',
+        border: 'none',
+        fontWeight: '600',
+        cursor: 'pointer',
+        fontSize: '1rem',
+        transition: 'background-color 0.2s',
+    },
+    btnClass: {
+        backgroundColor: '#f59e0b',
         color: 'white',
         padding: '0.75rem',
         borderRadius: '8px',
