@@ -15,12 +15,30 @@ const io = new Server(server, {
     },
 });
 
-const rooms = new Map(); // Room state storage
+const rooms = new Map(); // roomId -> { teacherSocket, students: Map<socketId, name> }
+
+function getRoom(roomId) {
+    if (!rooms.has(roomId)) {
+        rooms.set(roomId, { teacherSocket: null, students: new Map() });
+    }
+    return rooms.get(roomId);
+}
+
+function emitStudentList(roomId) {
+    const room = rooms.get(roomId);
+    if (!room || !room.teacherSocket) return;
+
+    const studentList = [];
+    for (const [socketId, name] of room.students) {
+        studentList.push({ socketId, name });
+    }
+
+    io.to(room.teacherSocket).emit('student-list', studentList);
+}
 
 io.on('connection', (socket) => {
     console.log(`User connected: ${socket.id}`);
 
-    // Join a specific room
     socket.on('join-room', ({ roomId, name, isTeacher }) => {
         socket.join(roomId);
         socket.data.roomId = roomId;
@@ -29,47 +47,49 @@ io.on('connection', (socket) => {
 
         console.log(`${name} (${isTeacher ? 'Teacher' : 'Student'}) joined room: ${roomId}`);
 
-        if (isTeacher) {
-            if (!rooms.has(roomId)) {
-                rooms.set(roomId, { teacherSocket: socket.id, drawings: [] });
-            } else {
-                const room = rooms.get(roomId);
-                room.teacherSocket = socket.id;
-            }
-        }
+        const room = getRoom(roomId);
 
-        // Send existing drawings to the new user if they exist
-        const room = rooms.get(roomId);
-        if (room && room.drawings.length > 0) {
-            socket.emit('initial-drawings', room.drawings);
+        if (isTeacher) {
+            room.teacherSocket = socket.id;
+            // Send the current student list to the teacher immediately
+            emitStudentList(roomId);
+        } else {
+            // Add student to room roster
+            room.students.set(socket.id, name);
+            // Notify teacher about updated roster
+            emitStudentList(roomId);
         }
 
         socket.to(roomId).emit('user-joined', { name, isTeacher });
     });
 
-    // Handle drawing events
+    // Handle drawing events — attach student identity
     socket.on('draw', (data) => {
         const roomId = socket.data.roomId;
-        if (roomId) {
-            socket.to(roomId).emit('draw', data);
-
-            // Optional: store drawings in memory to send to late joiners
-            const room = rooms.get(roomId);
-            if (room) {
-                // to keep memory bounded, we might want to store paths instead of individual points long-term, 
-                // but for this simple version we keep it minimal.
-            }
+        if (roomId && !socket.data.isTeacher) {
+            socket.to(roomId).emit('draw', {
+                ...data,
+                studentId: socket.id,
+                studentName: socket.data.name,
+            });
         }
     });
 
-    // Handle board clear
+    // Handle student clearing their own board
+    socket.on('student-clear', () => {
+        const roomId = socket.data.roomId;
+        if (roomId && !socket.data.isTeacher) {
+            socket.to(roomId).emit('student-clear', {
+                studentId: socket.id,
+                studentName: socket.data.name,
+            });
+        }
+    });
+
+    // Handle teacher clearing ALL boards
     socket.on('clear-board', () => {
         const roomId = socket.data.roomId;
         if (roomId) {
-            const room = rooms.get(roomId);
-            if (room) {
-                room.drawings = [];
-            }
             io.to(roomId).emit('clear-board');
         }
     });
@@ -78,6 +98,21 @@ io.on('connection', (socket) => {
         console.log(`User disconnected: ${socket.id}`);
         const roomId = socket.data.roomId;
         if (roomId) {
+            const room = rooms.get(roomId);
+            if (room) {
+                if (socket.data.isTeacher) {
+                    room.teacherSocket = null;
+                } else {
+                    room.students.delete(socket.id);
+                    // Notify teacher about updated roster
+                    emitStudentList(roomId);
+                }
+
+                // Clean up empty rooms
+                if (!room.teacherSocket && room.students.size === 0) {
+                    rooms.delete(roomId);
+                }
+            }
             socket.to(roomId).emit('user-left', { name: socket.data.name });
         }
     });

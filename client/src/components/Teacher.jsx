@@ -5,20 +5,50 @@ import { io } from 'socket.io-client';
 import styles from './Teacher.module.css';
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3001';
+const STUDENTS_PER_PAGE = 9;
+const OFFSCREEN_WIDTH = 800;
+const OFFSCREEN_HEIGHT = 600;
 
 export default function Teacher() {
     const [searchParams] = useSearchParams();
     const roomId = searchParams.get('room');
 
-    const canvasRef = useRef(null);
-    const contextRef = useRef(null);
     const socketRef = useRef(null);
 
-    // UI state
+    // students: [{ socketId, name }]
     const [students, setStudents] = useState([]);
+    const [page, setPage] = useState(0);
+    const [zoomedStudent, setZoomedStudent] = useState(null); // socketId or null
     const [showLargeQR, setShowLargeQR] = useState(false);
 
-    // Initial setup
+    // Map<socketId, { canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D }>
+    const offscreenCanvasesRef = useRef(new Map());
+    // Map<socketId, { drawing: boolean }> — track per-student drawing state for beginPath
+    const drawStateRef = useRef(new Map());
+
+    // Refs for visible grid canvases
+    const gridCanvasRefs = useRef(new Map());
+    // Ref for zoomed canvas
+    const zoomCanvasRef = useRef(null);
+    const animFrameRef = useRef(null);
+
+    const getOrCreateOffscreen = useCallback((studentId) => {
+        if (!offscreenCanvasesRef.current.has(studentId)) {
+            const canvas = document.createElement('canvas');
+            canvas.width = OFFSCREEN_WIDTH;
+            canvas.height = OFFSCREEN_HEIGHT;
+            const ctx = canvas.getContext('2d');
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            // White background
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, OFFSCREEN_WIDTH, OFFSCREEN_HEIGHT);
+            offscreenCanvasesRef.current.set(studentId, { canvas, ctx });
+        }
+        return offscreenCanvasesRef.current.get(studentId);
+    }, []);
+
+    // Socket setup
     useEffect(() => {
         if (!roomId) return;
 
@@ -28,72 +58,34 @@ export default function Teacher() {
             socketRef.current.emit('join-room', { roomId, name: 'Teacher', isTeacher: true });
         });
 
-        socketRef.current.on('user-joined', ({ name, isTeacher }) => {
-            if (!isTeacher) {
-                setStudents(prev => [...prev, name]);
+        socketRef.current.on('student-list', (list) => {
+            setStudents(list);
+            // Clean up offscreen canvases for students who left
+            const activeIds = new Set(list.map(s => s.socketId));
+            for (const id of offscreenCanvasesRef.current.keys()) {
+                if (!activeIds.has(id)) {
+                    offscreenCanvasesRef.current.delete(id);
+                    drawStateRef.current.delete(id);
+                }
             }
         });
 
-        socketRef.current.on('user-left', ({ name }) => {
-            setStudents(prev => prev.filter(s => s !== name));
-        });
+        socketRef.current.on('draw', (data) => {
+            const { studentId, x, y, state, color, size, isEraser } = data;
+            if (!studentId) return;
 
-        // Initialize Canvas
-        const canvas = canvasRef.current;
-        if (canvas) {
-            const handleResize = () => {
-                const parent = canvas.parentElement;
-                const rect = parent.getBoundingClientRect();
-
-                // Keep the canvas high-res based on device pixel ratio
-                const dpr = window.devicePixelRatio || 1;
-                canvas.width = rect.width * dpr;
-                canvas.height = rect.height * dpr;
-
-                const ctx = canvas.getContext('2d');
-                ctx.scale(dpr, dpr);
-                ctx.lineCap = 'round';
-                ctx.lineJoin = 'round';
-                contextRef.current = ctx;
-
-                // Repaint white background
-                ctx.fillStyle = '#ffffff';
-                ctx.fillRect(0, 0, rect.width, rect.height);
-            };
-
-            window.addEventListener('resize', handleResize);
-            handleResize();
-
-            return () => {
-                window.removeEventListener('resize', handleResize);
-                if (socketRef.current) socketRef.current.disconnect();
-            };
-        }
-    }, [roomId]);
-
-    // Handle incoming drawings
-    useEffect(() => {
-        if (!socketRef.current) return;
-
-        const handleDraw = (data) => {
-            const { x, y, state, color, size, isEraser } = data;
-            const ctx = contextRef.current;
-            const canvas = canvasRef.current;
-
-            if (!ctx || !canvas) return;
-
-            const rect = canvas.getBoundingClientRect();
-            // x and y are passed as percentages to make it responsive
-            const localX = x * rect.width;
-            const localY = y * rect.height;
+            const { ctx } = getOrCreateOffscreen(studentId);
+            const localX = x * OFFSCREEN_WIDTH;
+            const localY = y * OFFSCREEN_HEIGHT;
 
             if (state === 'start') {
                 ctx.beginPath();
                 ctx.moveTo(localX, localY);
+                drawStateRef.current.set(studentId, { drawing: true });
             } else if (state === 'move') {
                 if (isEraser) {
                     ctx.globalCompositeOperation = 'destination-out';
-                    ctx.lineWidth = size * 2; // Eraser is usually larger
+                    ctx.lineWidth = size * 2;
                 } else {
                     ctx.globalCompositeOperation = 'source-over';
                     ctx.strokeStyle = color;
@@ -101,58 +93,128 @@ export default function Teacher() {
                 }
                 ctx.lineTo(localX, localY);
                 ctx.stroke();
+            } else if (state === 'end') {
+                drawStateRef.current.set(studentId, { drawing: false });
             }
-        };
+        });
 
-        const handleClear = () => {
-            const ctx = contextRef.current;
-            const canvas = canvasRef.current;
-            if (ctx && canvas) {
-                const rect = canvas.getBoundingClientRect();
-                ctx.clearRect(0, 0, rect.width, rect.height);
+        socketRef.current.on('student-clear', ({ studentId }) => {
+            if (offscreenCanvasesRef.current.has(studentId)) {
+                const { ctx } = offscreenCanvasesRef.current.get(studentId);
+                ctx.globalCompositeOperation = 'source-over';
+                ctx.clearRect(0, 0, OFFSCREEN_WIDTH, OFFSCREEN_HEIGHT);
                 ctx.fillStyle = '#ffffff';
-                ctx.fillRect(0, 0, rect.width, rect.height);
+                ctx.fillRect(0, 0, OFFSCREEN_WIDTH, OFFSCREEN_HEIGHT);
             }
-        };
+        });
 
-        socketRef.current.on('draw', handleDraw);
-        socketRef.current.on('clear-board', handleClear);
+        socketRef.current.on('clear-board', () => {
+            // Clear all offscreen canvases
+            for (const [, { ctx }] of offscreenCanvasesRef.current) {
+                ctx.globalCompositeOperation = 'source-over';
+                ctx.clearRect(0, 0, OFFSCREEN_WIDTH, OFFSCREEN_HEIGHT);
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(0, 0, OFFSCREEN_WIDTH, OFFSCREEN_HEIGHT);
+            }
+        });
 
         return () => {
-            socketRef.current.off('draw', handleDraw);
-            socketRef.current.off('clear-board', handleClear);
+            if (socketRef.current) socketRef.current.disconnect();
         };
-    }, []);
+    }, [roomId, getOrCreateOffscreen]);
 
-    const clearCanvas = () => {
+    // Animation loop — copy offscreen canvases to visible grid canvases + zoom canvas
+    useEffect(() => {
+        const render = () => {
+            // Render grid canvases
+            for (const [studentId, canvasEl] of gridCanvasRefs.current) {
+                if (!canvasEl) continue;
+                const offscreen = offscreenCanvasesRef.current.get(studentId);
+                if (!offscreen) continue;
+
+                const ctx = canvasEl.getContext('2d');
+                const rect = canvasEl.getBoundingClientRect();
+                const dpr = window.devicePixelRatio || 1;
+
+                // Ensure canvas buffer matches display size
+                if (canvasEl.width !== Math.round(rect.width * dpr) || canvasEl.height !== Math.round(rect.height * dpr)) {
+                    canvasEl.width = Math.round(rect.width * dpr);
+                    canvasEl.height = Math.round(rect.height * dpr);
+                }
+
+                ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+                ctx.drawImage(offscreen.canvas, 0, 0, canvasEl.width, canvasEl.height);
+            }
+
+            // Render zoom canvas
+            if (zoomedStudent && zoomCanvasRef.current) {
+                const offscreen = offscreenCanvasesRef.current.get(zoomedStudent);
+                if (offscreen) {
+                    const canvasEl = zoomCanvasRef.current;
+                    const ctx = canvasEl.getContext('2d');
+                    const rect = canvasEl.getBoundingClientRect();
+                    const dpr = window.devicePixelRatio || 1;
+
+                    if (canvasEl.width !== Math.round(rect.width * dpr) || canvasEl.height !== Math.round(rect.height * dpr)) {
+                        canvasEl.width = Math.round(rect.width * dpr);
+                        canvasEl.height = Math.round(rect.height * dpr);
+                    }
+
+                    ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+                    ctx.drawImage(offscreen.canvas, 0, 0, canvasEl.width, canvasEl.height);
+                }
+            }
+
+            animFrameRef.current = requestAnimationFrame(render);
+        };
+
+        animFrameRef.current = requestAnimationFrame(render);
+        return () => {
+            if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+        };
+    }, [zoomedStudent]);
+
+    // Pagination
+    const totalPages = Math.max(1, Math.ceil(students.length / STUDENTS_PER_PAGE));
+    const visibleStudents = students.slice(page * STUDENTS_PER_PAGE, (page + 1) * STUDENTS_PER_PAGE);
+
+    // Adjust page if students leave and page is now out of bounds
+    useEffect(() => {
+        if (page >= totalPages) {
+            setPage(Math.max(0, totalPages - 1));
+        }
+    }, [page, totalPages]);
+
+    const clearAllBoards = () => {
         if (socketRef.current) {
             socketRef.current.emit('clear-board');
-        }
-        // Locally clear
-        const ctx = contextRef.current;
-        const canvas = canvasRef.current;
-        if (ctx && canvas) {
-            const rect = canvas.getBoundingClientRect();
-            ctx.clearRect(0, 0, rect.width, rect.height);
-            ctx.fillStyle = '#ffffff';
-            ctx.fillRect(0, 0, rect.width, rect.height);
         }
     };
 
     const joinUrl = `${window.location.origin}/student?room=${roomId}`;
 
+    const zoomedStudentName = zoomedStudent
+        ? students.find(s => s.socketId === zoomedStudent)?.name || 'Student'
+        : '';
+
     return (
         <div className={styles.container}>
-            {/* Sidebar / Topbar */}
+            {/* Header */}
             <header className={styles.header}>
                 <div className={styles.headerLeft}>
                     <h1>Interactive Board</h1>
                     <div className={styles.roomBadge}>Room: {roomId}</div>
                 </div>
 
+                <div className={styles.headerCenter}>
+                    <span className={styles.studentCount}>
+                        {students.length} Student{students.length !== 1 ? 's' : ''} Connected
+                    </span>
+                </div>
+
                 <div className={styles.headerRight}>
-                    <button className={styles.clearBtn} onClick={clearCanvas}>
-                        Clear Board
+                    <button className={styles.clearBtn} onClick={clearAllBoards}>
+                        Clear All Boards
                     </button>
 
                     <div
@@ -166,26 +228,83 @@ export default function Teacher() {
                 </div>
             </header>
 
-            {/* Main Canvas Area */}
-            <main className={styles.mainCanvas}>
-                <canvas ref={canvasRef} className={styles.canvas} />
+            {/* Main Grid Area */}
+            <main className={styles.gridArea}>
+                {students.length === 0 ? (
+                    <div className={styles.emptyState}>
+                        <div className={styles.emptyIcon}>👋</div>
+                        <h2>Waiting for students...</h2>
+                        <p>Share the room code or QR code for students to join.</p>
+                    </div>
+                ) : (
+                    <div className={styles.grid}>
+                        {visibleStudents.map((student) => (
+                            <div
+                                key={student.socketId}
+                                className={styles.studentTile}
+                                onClick={() => setZoomedStudent(student.socketId)}
+                            >
+                                <div className={styles.tileHeader}>
+                                    <span className={styles.dot}></span>
+                                    <span className={styles.tileName}>{student.name}</span>
+                                </div>
+                                <div className={styles.tileCanvas}>
+                                    <canvas
+                                        ref={(el) => {
+                                            if (el) {
+                                                gridCanvasRefs.current.set(student.socketId, el);
+                                                // Ensure offscreen exists
+                                                getOrCreateOffscreen(student.socketId);
+                                            } else {
+                                                gridCanvasRefs.current.delete(student.socketId);
+                                            }
+                                        }}
+                                        className={styles.miniCanvas}
+                                    />
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
             </main>
 
-            {/* Students List Floating Panel */}
-            <div className={styles.studentPanel}>
-                <h3>Students ({students.length})</h3>
-                <ul className={styles.studentList}>
-                    {students.map((student, idx) => (
-                        <li key={idx}>
-                            <span className={styles.dot}></span>
-                            {student}
-                        </li>
-                    ))}
-                    {students.length === 0 && (
-                        <li className={styles.emptyText}>Waiting for students...</li>
-                    )}
-                </ul>
-            </div>
+            {/* Pagination */}
+            {totalPages > 1 && (
+                <div className={styles.pagination}>
+                    <button
+                        className={styles.pageBtn}
+                        disabled={page === 0}
+                        onClick={() => setPage(p => p - 1)}
+                    >
+                        ← Previous
+                    </button>
+                    <span className={styles.pageIndicator}>
+                        Page {page + 1} of {totalPages}
+                    </span>
+                    <button
+                        className={styles.pageBtn}
+                        disabled={page >= totalPages - 1}
+                        onClick={() => setPage(p => p + 1)}
+                    >
+                        Next →
+                    </button>
+                </div>
+            )}
+
+            {/* Zoom Modal */}
+            {zoomedStudent && (
+                <div className={styles.zoomOverlay} onClick={() => setZoomedStudent(null)}>
+                    <div className={styles.zoomContent} onClick={e => e.stopPropagation()}>
+                        <div className={styles.zoomHeader}>
+                            <h2 className={styles.zoomTitle}>{zoomedStudentName}</h2>
+                            <button className={styles.closeZoomBtn} onClick={() => setZoomedStudent(null)}>×</button>
+                        </div>
+                        <div className={styles.zoomCanvasWrapper}>
+                            <canvas ref={zoomCanvasRef} className={styles.zoomCanvas} />
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Large QR Code Overlay */}
             {showLargeQR && (

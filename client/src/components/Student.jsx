@@ -199,6 +199,10 @@ export default function Student() {
             const rect = canvas.getBoundingClientRect();
             ctx.clearRect(0, 0, rect.width, rect.height);
         }
+        // Notify server so teacher's view of this student is cleared
+        if (socketRef.current) {
+            socketRef.current.emit('student-clear');
+        }
     };
 
     if (!roomId) {
