@@ -43,6 +43,16 @@ export default function Student() {
             setJoined(false);
         });
 
+        // Listen for teacher clearing all boards
+        socketRef.current.on('clear-board', () => {
+            const ctx = contextRef.current;
+            const canvas = canvasRef.current;
+            if (ctx && canvas) {
+                const rect = canvas.getBoundingClientRect();
+                ctx.clearRect(0, 0, rect.width, rect.height);
+            }
+        });
+
         // Setup Canvas
         const canvas = canvasRef.current;
         if (canvas) {
