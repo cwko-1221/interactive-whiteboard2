@@ -19,48 +19,95 @@ export default function ClassStudent() {
     const activePointerId = useRef(null);
     const activeToolRef = useRef(activeTool);
 
-    const canvasRef = useRef(null);
+    const bgCanvasRef = useRef(null);   // Background image layer (bottom)
+    const canvasRef = useRef(null);      // Drawing layer (top, transparent)
     const contextRef = useRef(null);
     const socketRef = useRef(null);
     const joinedRef = useRef(false);
-    const bgImageRef = useRef(null); // stored HTMLImageElement
+    const bgImageRef = useRef(null);     // stored HTMLImageElement
 
     useEffect(() => { activeToolRef.current = activeTool; }, [activeTool]);
     useEffect(() => { joinedRef.current = joined; }, [joined]);
+
+    // Draw background image onto the BACKGROUND canvas (separate from drawing layer)
+    const drawBackground = useCallback(() => {
+        const bgCanvas = bgCanvasRef.current;
+        if (!bgCanvas || !bgImageRef.current) return;
+
+        const rect = bgCanvas.getBoundingClientRect();
+        const dpr = window.devicePixelRatio || 1;
+
+        bgCanvas.width = Math.round(rect.width * dpr);
+        bgCanvas.height = Math.round(rect.height * dpr);
+
+        const bgCtx = bgCanvas.getContext('2d');
+        bgCtx.scale(dpr, dpr);
+        bgCtx.drawImage(bgImageRef.current, 0, 0, rect.width, rect.height);
+    }, []);
+
+    // Load and display a background image from base64 data
+    const loadAndDrawImage = useCallback((imageData) => {
+        if (!imageData) return;
+        const img = new Image();
+        img.onload = () => {
+            bgImageRef.current = img;
+            drawBackground();
+        };
+        img.src = imageData;
+    }, [drawBackground]);
 
     // Initialize Socket and Canvas
     useEffect(() => {
         if (!joined || !roomId) return;
 
-        socketRef.current = io(SERVER_URL);
+        const socket = io(SERVER_URL);
+        socketRef.current = socket;
 
-        socketRef.current.on('connect', () => {
-            socketRef.current.emit('join-room', { roomId, name, isTeacher: false });
+        socket.on('connect', () => {
+            socket.emit('join-room', { roomId, name, isTeacher: false });
         });
 
-        socketRef.current.on('error', (msg) => {
+        socket.on('error', (msg) => {
             setError(msg);
             setJoined(false);
         });
 
         // Receive background image from server
-        socketRef.current.on('room-image', (imageData) => {
-            const img = new Image();
-            img.onload = () => {
-                bgImageRef.current = img;
-                drawBackground();
-            };
-            img.src = imageData;
+        socket.on('room-image', (imageData) => {
+            loadAndDrawImage(imageData);
         });
 
-        // Setup Canvas
+        // Handle teacher clearing ALL boards — only clear the drawing layer
+        socket.on('clear-board', () => {
+            const ctx = contextRef.current;
+            const canvas = canvasRef.current;
+            if (ctx && canvas) {
+                const rect = canvas.getBoundingClientRect();
+                ctx.globalCompositeOperation = 'source-over';
+                ctx.clearRect(0, 0, rect.width, rect.height);
+                // Background canvas is untouched — image stays visible
+            }
+        });
+
+        // Setup DRAWING Canvas (transparent — strokes only)
         const canvas = canvasRef.current;
+        let handleResize;
         if (canvas) {
-            const handleResize = () => {
+            handleResize = () => {
                 const rect = canvas.getBoundingClientRect();
                 const dpr = window.devicePixelRatio || 1;
-                canvas.width = rect.width * dpr;
-                canvas.height = rect.height * dpr;
+
+                // Save existing drawing before resizing
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = canvas.width;
+                tempCanvas.height = canvas.height;
+                const tempCtx = tempCanvas.getContext('2d');
+                if (canvas.width > 0 && canvas.height > 0) {
+                    tempCtx.drawImage(canvas, 0, 0);
+                }
+
+                canvas.width = Math.round(rect.width * dpr);
+                canvas.height = Math.round(rect.height * dpr);
 
                 const ctx = canvas.getContext('2d');
                 ctx.scale(dpr, dpr);
@@ -69,31 +116,26 @@ export default function ClassStudent() {
 
                 contextRef.current = ctx;
 
-                // Redraw background on resize
+                // Restore previous strokes (no background — canvas stays transparent)
+                if (tempCanvas.width > 0 && tempCanvas.height > 0) {
+                    ctx.drawImage(tempCanvas, 0, 0, rect.width, rect.height);
+                }
+
+                // Also resize the background canvas
                 drawBackground();
             };
 
             handleResize();
             window.addEventListener('resize', handleResize);
-            return () => {
+        }
+
+        return () => {
+            if (handleResize) {
                 window.removeEventListener('resize', handleResize);
-                if (socketRef.current) socketRef.current.disconnect();
-            };
-        }
-    }, [joined, roomId, name]);
-
-    const drawBackground = useCallback(() => {
-        const ctx = contextRef.current;
-        const canvas = canvasRef.current;
-        if (!ctx || !canvas) return;
-
-        const rect = canvas.getBoundingClientRect();
-
-        if (bgImageRef.current) {
-            ctx.globalCompositeOperation = 'source-over';
-            ctx.drawImage(bgImageRef.current, 0, 0, rect.width, rect.height);
-        }
-    }, []);
+            }
+            socket.disconnect();
+        };
+    }, [joined, roomId, name, drawBackground, loadAndDrawImage]);
 
     const getCoordinates = useCallback((e) => {
         if (!canvasRef.current) return { x: 0, y: 0 };
@@ -109,6 +151,8 @@ export default function ClassStudent() {
         if (!ctx) return;
 
         if (activeToolRef.current === 'eraser') {
+            // destination-out on the drawing layer only removes strokes,
+            // background image is on a separate canvas underneath
             ctx.globalCompositeOperation = 'destination-out';
             ctx.lineWidth = 20;
         } else {
@@ -221,9 +265,9 @@ export default function ClassStudent() {
         const canvas = canvasRef.current;
         if (ctx && canvas) {
             const rect = canvas.getBoundingClientRect();
+            ctx.globalCompositeOperation = 'source-over';
             ctx.clearRect(0, 0, rect.width, rect.height);
-            // Redraw background image after clearing
-            drawBackground();
+            // Only clear strokes — background canvas stays intact
         }
         if (socketRef.current) {
             socketRef.current.emit('student-clear');
@@ -302,7 +346,12 @@ export default function ClassStudent() {
                 </button>
             </div>
 
-            {/* Canvas */}
+            {/* Background image canvas (bottom layer) */}
+            <canvas
+                ref={bgCanvasRef}
+                className={styles.bgCanvas}
+            />
+            {/* Drawing canvas (top layer, transparent) */}
             <canvas
                 ref={canvasRef}
                 className={styles.canvas}

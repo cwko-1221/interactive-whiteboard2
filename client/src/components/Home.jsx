@@ -15,10 +15,23 @@ export default function Home() {
         navigate(`/class-teacher?room=${roomId}`);
     };
 
-    const joinRoom = (e) => {
+    const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3001';
+
+    const joinRoom = async (e) => {
         e.preventDefault();
-        if (joinCode.trim()) {
-            navigate(`/student?room=${joinCode.toUpperCase()}`);
+        if (!joinCode.trim()) return;
+        const code = joinCode.toUpperCase();
+        try {
+            const res = await fetch(`${SERVER_URL}/api/room-type/${code}`);
+            const data = await res.json();
+            if (data.type === 'class') {
+                navigate(`/class-student?room=${code}`);
+            } else {
+                navigate(`/student?room=${code}`);
+            }
+        } catch {
+            // Fallback to regular student if server is unreachable
+            navigate(`/student?room=${code}`);
         }
     };
 

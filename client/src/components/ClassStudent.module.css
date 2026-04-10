@@ -13,13 +13,27 @@
     -webkit-touch-callout: none;
 }
 
+.bgCanvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+    z-index: 0;
+}
+
 .canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
     width: 100%;
     height: 100%;
     display: block;
     touch-action: none;
     outline: none;
     -webkit-tap-highlight-color: transparent;
+    z-index: 1;
 }
 
 /* Toolbar */

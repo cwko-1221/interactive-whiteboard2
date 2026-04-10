@@ -40,32 +40,10 @@ export default function ClassTeacher() {
             const ctx = canvas.getContext('2d');
             ctx.lineCap = 'round';
             ctx.lineJoin = 'round';
-            // Draw background image if available, otherwise white
-            if (bgImageRef.current) {
-                ctx.drawImage(bgImageRef.current, 0, 0, OFFSCREEN_WIDTH, OFFSCREEN_HEIGHT);
-            } else {
-                ctx.fillStyle = '#ffffff';
-                ctx.fillRect(0, 0, OFFSCREEN_WIDTH, OFFSCREEN_HEIGHT);
-            }
+            // Canvas is transparent — strokes only, bg composited separately
             offscreenCanvasesRef.current.set(studentId, { canvas, ctx });
         }
         return offscreenCanvasesRef.current.get(studentId);
-    }, []);
-
-    // Repaint all offscreen canvases with the background image
-    const repaintAllWithImage = useCallback((img) => {
-        for (const [, { canvas, ctx }] of offscreenCanvasesRef.current) {
-            // Save current drawing
-            const tempCanvas = document.createElement('canvas');
-            tempCanvas.width = canvas.width;
-            tempCanvas.height = canvas.height;
-            tempCanvas.getContext('2d').drawImage(canvas, 0, 0);
-
-            // Draw image background
-            ctx.globalCompositeOperation = 'source-over';
-            ctx.clearRect(0, 0, OFFSCREEN_WIDTH, OFFSCREEN_HEIGHT);
-            ctx.drawImage(img, 0, 0, OFFSCREEN_WIDTH, OFFSCREEN_HEIGHT);
-        }
     }, []);
 
     // Socket setup
@@ -75,7 +53,7 @@ export default function ClassTeacher() {
         socketRef.current = io(SERVER_URL);
 
         socketRef.current.on('connect', () => {
-            socketRef.current.emit('join-room', { roomId, name: 'Teacher', isTeacher: true });
+            socketRef.current.emit('join-room', { roomId, name: 'Teacher', isTeacher: true, roomType: 'class' });
         });
 
         socketRef.current.on('student-list', (list) => {
@@ -120,28 +98,15 @@ export default function ClassTeacher() {
         socketRef.current.on('student-clear', ({ studentId }) => {
             if (offscreenCanvasesRef.current.has(studentId)) {
                 const { ctx } = offscreenCanvasesRef.current.get(studentId);
-                ctx.globalCompositeOperation = 'source-over';
                 ctx.clearRect(0, 0, OFFSCREEN_WIDTH, OFFSCREEN_HEIGHT);
-                // Redraw image background after clear
-                if (bgImageRef.current) {
-                    ctx.drawImage(bgImageRef.current, 0, 0, OFFSCREEN_WIDTH, OFFSCREEN_HEIGHT);
-                } else {
-                    ctx.fillStyle = '#ffffff';
-                    ctx.fillRect(0, 0, OFFSCREEN_WIDTH, OFFSCREEN_HEIGHT);
-                }
+                // Only clear strokes — bg image is composited separately in render loop
             }
         });
 
         socketRef.current.on('clear-board', () => {
             for (const [, { ctx }] of offscreenCanvasesRef.current) {
-                ctx.globalCompositeOperation = 'source-over';
                 ctx.clearRect(0, 0, OFFSCREEN_WIDTH, OFFSCREEN_HEIGHT);
-                if (bgImageRef.current) {
-                    ctx.drawImage(bgImageRef.current, 0, 0, OFFSCREEN_WIDTH, OFFSCREEN_HEIGHT);
-                } else {
-                    ctx.fillStyle = '#ffffff';
-                    ctx.fillRect(0, 0, OFFSCREEN_WIDTH, OFFSCREEN_HEIGHT);
-                }
+                // Only clear strokes — bg image is composited separately in render loop
             }
         });
 
@@ -172,6 +137,14 @@ export default function ClassTeacher() {
                 }
 
                 ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+                // Draw background image first
+                if (bgImageRef.current) {
+                    ctx.drawImage(bgImageRef.current, 0, 0, canvasEl.width, canvasEl.height);
+                } else {
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fillRect(0, 0, canvasEl.width, canvasEl.height);
+                }
+                // Draw student strokes on top
                 ctx.drawImage(offscreen.canvas, 0, 0, canvasEl.width, canvasEl.height);
             }
 
@@ -189,6 +162,14 @@ export default function ClassTeacher() {
                     }
 
                     ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+                    // Draw background image first
+                    if (bgImageRef.current) {
+                        ctx.drawImage(bgImageRef.current, 0, 0, canvasEl.width, canvasEl.height);
+                    } else {
+                        ctx.fillStyle = '#ffffff';
+                        ctx.fillRect(0, 0, canvasEl.width, canvasEl.height);
+                    }
+                    // Draw student strokes on top
                     ctx.drawImage(offscreen.canvas, 0, 0, canvasEl.width, canvasEl.height);
                 }
             }
@@ -239,12 +220,11 @@ export default function ClassTeacher() {
             const base64 = event.target.result;
             setUploadedImage(base64);
 
-            // Create image element and cache it
+            // Create image element and cache it for the render loop
             const img = new Image();
             img.onload = () => {
                 bgImageRef.current = img;
-                // Repaint existing offscreen canvases with the new image
-                repaintAllWithImage(img);
+                // No need to repaint offscreen canvases — bg is composited in render loop
             };
             img.src = base64;
 

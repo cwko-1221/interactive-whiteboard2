@@ -16,11 +16,11 @@ const io = new Server(server, {
     maxHttpBufferSize: 10 * 1024 * 1024, // 10 MB for image uploads
 });
 
-const rooms = new Map(); // roomId -> { teacherSocket, students: Map<socketId, name>, image: string|null }
+const rooms = new Map(); // roomId -> { teacherSocket, students: Map<socketId, name>, image: string|null, type: string }
 
 function getRoom(roomId) {
     if (!rooms.has(roomId)) {
-        rooms.set(roomId, { teacherSocket: null, students: new Map(), image: null });
+        rooms.set(roomId, { teacherSocket: null, students: new Map(), image: null, type: 'whiteboard' });
     }
     return rooms.get(roomId);
 }
@@ -40,7 +40,7 @@ function emitStudentList(roomId) {
 io.on('connection', (socket) => {
     console.log(`User connected: ${socket.id}`);
 
-    socket.on('join-room', ({ roomId, name, isTeacher }) => {
+    socket.on('join-room', ({ roomId, name, isTeacher, roomType }) => {
         socket.join(roomId);
         socket.data.roomId = roomId;
         socket.data.name = name;
@@ -52,6 +52,10 @@ io.on('connection', (socket) => {
 
         if (isTeacher) {
             room.teacherSocket = socket.id;
+            // Store the room type if provided by teacher
+            if (roomType) {
+                room.type = roomType;
+            }
             // Send the current student list to the teacher immediately
             emitStudentList(roomId);
         } else {
@@ -145,6 +149,17 @@ const PORT = process.env.PORT || 3001;
 // Simple health check endpoint
 app.get('/health', (req, res) => {
     res.status(200).send('OK');
+});
+
+// Room type lookup endpoint
+app.get('/api/room-type/:roomId', (req, res) => {
+    const { roomId } = req.params;
+    const room = rooms.get(roomId);
+    if (room) {
+        res.json({ exists: true, type: room.type });
+    } else {
+        res.json({ exists: false, type: null });
+    }
 });
 
 server.listen(PORT, () => {
