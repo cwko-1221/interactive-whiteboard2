@@ -5,7 +5,7 @@ import { io } from 'socket.io-client';
 import styles from './ClassTeacher.module.css';
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3001';
-const STUDENTS_PER_PAGE = 9;
+const STUDENTS_PER_PAGE = 12;
 const OFFSCREEN_WIDTH = 800;
 const OFFSCREEN_HEIGHT = 600;
 
