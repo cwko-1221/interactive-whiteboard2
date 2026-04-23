@@ -276,6 +276,8 @@ export default function ClassStudent() {
     }, [joined, getCoordinates, setupContextMode, emitDrawEvent]);
 
 
+    const [clearProgress, setClearProgress] = useState(0);
+
     const clearCanvas = () => {
         const ctx = contextRef.current;
         const canvas = canvasRef.current;
@@ -287,6 +289,21 @@ export default function ClassStudent() {
         }
         if (socketRef.current) {
             socketRef.current.emit('student-clear');
+        }
+        setClearProgress(0); // Reset slider
+    };
+
+    const handleClearSliderChange = (e) => {
+        const val = parseInt(e.target.value);
+        setClearProgress(val);
+        if (val >= 100) {
+            clearCanvas();
+        }
+    };
+
+    const handleClearSliderRelease = () => {
+        if (clearProgress < 100) {
+            setClearProgress(0);
         }
     };
 
@@ -353,13 +370,31 @@ export default function ClassStudent() {
 
                 <div className={styles.divider}></div>
 
-                <button
-                    className={`${styles.toolBtn} ${styles.clearBtn}`}
-                    onClick={clearCanvas}
-                    title="Clear My Canvas"
-                >
-                    <Trash2 size={20} />
-                </button>
+                {/* Slide to Clear */}
+                <div className={styles.sliderContainer} title="Slide to Clear All">
+                    <div className={styles.sliderTrack}>
+                        <div 
+                            className={styles.sliderFill} 
+                            style={{ width: `${clearProgress}%`, opacity: clearProgress / 100 }}
+                        ></div>
+                        <input
+                            type="range"
+                            min="0"
+                            max="100"
+                            value={clearProgress}
+                            onChange={handleClearSliderChange}
+                            onMouseUp={handleClearSliderRelease}
+                            onTouchEnd={handleClearSliderRelease}
+                            className={styles.clearSlider}
+                        />
+                        <div className={styles.sliderLabel} style={{ opacity: 1 - (clearProgress / 50) }}>
+                             Slide to Clear
+                        </div>
+                    </div>
+                    <div className={styles.sliderIcon}>
+                        <Trash2 size={16} color={clearProgress > 90 ? "#ef4444" : "#9ca3af"} />
+                    </div>
+                </div>
             </div>
 
             {/* Background image canvas (bottom layer) */}
