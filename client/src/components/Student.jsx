@@ -81,10 +81,29 @@ export default function Student() {
 
     const getCoordinates = useCallback((e) => {
         if (!canvasRef.current) return { x: 0, y: 0 };
-        const rect = canvasRef.current.getBoundingClientRect();
+        const canvas = canvasRef.current;
+        const rect = canvas.getBoundingClientRect();
+
+        // Use offsetX/Y if available (most reliable for direct element relative coords)
+        // Some older browsers/devices might not provide these in pointer events consistently
+        let x, y;
+
+        if (e.offsetX !== undefined && e.offsetY !== undefined) {
+            x = e.offsetX;
+            y = e.offsetY;
+        } else {
+            // Fallback for older iOS Safari
+            const clientX = e.clientX || (e.touches && e.touches[0] ? e.touches[0].clientX : 0);
+            const clientY = e.clientY || (e.touches && e.touches[0] ? e.touches[0].clientY : 0);
+            x = clientX - rect.left;
+            y = clientY - rect.top;
+        }
+
         return {
-            x: (e.clientX - rect.left) / rect.width,
-            y: (e.clientY - rect.top) / rect.height
+            x: x / rect.width,
+            y: y / rect.height,
+            rawX: x,
+            rawY: y
         };
     }, []);
 
@@ -105,7 +124,8 @@ export default function Student() {
     const emitDrawEvent = useCallback((state, point) => {
         if (socketRef.current && joinedRef.current) {
             socketRef.current.emit('draw', {
-                ...point,
+                x: point.x,
+                y: point.y,
                 state,
                 color: '#000000',
                 size: activeToolRef.current === 'eraser' ? 10 : 1.5,
@@ -123,6 +143,9 @@ export default function Student() {
         const canvas = canvasRef.current;
         if (!canvas) return;
 
+        let lastX = 0;
+        let lastY = 0;
+
         const handlePointerDown = (e) => {
             // Always prevent default immediately to stop Safari gesture recognition
             if (e.cancelable) e.preventDefault();
@@ -139,17 +162,18 @@ export default function Student() {
             activePointerId.current = e.pointerId;
             isDrawing.current = true;
 
-            const { x, y } = getCoordinates(e);
+            const coords = getCoordinates(e);
+            lastX = coords.rawX;
+            lastY = coords.rawY;
 
             const ctx = contextRef.current;
             if (ctx) {
-                ctx.beginPath();
-                const rect = canvas.getBoundingClientRect();
                 setupContextMode();
-                ctx.moveTo(x * rect.width, y * rect.height);
+                ctx.beginPath();
+                ctx.moveTo(lastX, lastY);
             }
 
-            emitDrawEvent('start', { x, y });
+            emitDrawEvent('start', coords);
         };
 
         const handlePointerMove = (e) => {
@@ -158,16 +182,14 @@ export default function Student() {
 
             if (e.cancelable) e.preventDefault();
 
-            const { x, y } = getCoordinates(e);
-
+            const coords = getCoordinates(e);
             const ctx = contextRef.current;
             if (ctx) {
-                const rect = canvas.getBoundingClientRect();
-                ctx.lineTo(x * rect.width, y * rect.height);
+                ctx.lineTo(coords.rawX, coords.rawY);
                 ctx.stroke();
             }
 
-            emitDrawEvent('move', { x, y });
+            emitDrawEvent('move', coords);
         };
 
         const handlePointerUp = (e) => {
@@ -179,8 +201,8 @@ export default function Student() {
             isDrawing.current = false;
             activePointerId.current = null;
 
-            const { x, y } = getCoordinates(e);
-            emitDrawEvent('end', { x, y });
+            const coords = getCoordinates(e);
+            emitDrawEvent('end', coords);
         };
 
         // Block Safari's gesture recognizer at the touch level too

@@ -139,10 +139,28 @@ export default function ClassStudent() {
 
     const getCoordinates = useCallback((e) => {
         if (!canvasRef.current) return { x: 0, y: 0 };
-        const rect = canvasRef.current.getBoundingClientRect();
+        const canvas = canvasRef.current;
+        const rect = canvas.getBoundingClientRect();
+
+        let x, y;
+
+        // Use offsetX/Y if available for pinpoint accuracy
+        if (e.offsetX !== undefined && e.offsetY !== undefined) {
+            x = e.offsetX;
+            y = e.offsetY;
+        } else {
+            // Fallback for older devices/Safari
+            const clientX = e.clientX || (e.touches && e.touches[0] ? e.touches[0].clientX : 0);
+            const clientY = e.clientY || (e.touches && e.touches[0] ? e.touches[0].clientY : 0);
+            x = clientX - rect.left;
+            y = clientY - rect.top;
+        }
+
         return {
-            x: (e.clientX - rect.left) / rect.width,
-            y: (e.clientY - rect.top) / rect.height
+            x: x / rect.width,
+            y: y / rect.height,
+            rawX: x,
+            rawY: y
         };
     }, []);
 
@@ -151,8 +169,6 @@ export default function ClassStudent() {
         if (!ctx) return;
 
         if (activeToolRef.current === 'eraser') {
-            // destination-out on the drawing layer only removes strokes,
-            // background image is on a separate canvas underneath
             ctx.globalCompositeOperation = 'destination-out';
             ctx.lineWidth = 20;
         } else {
@@ -165,7 +181,8 @@ export default function ClassStudent() {
     const emitDrawEvent = useCallback((state, point) => {
         if (socketRef.current && joinedRef.current) {
             socketRef.current.emit('draw', {
-                ...point,
+                x: point.x,
+                y: point.y,
                 state,
                 color: '#000000',
                 size: activeToolRef.current === 'eraser' ? 10 : 1.5,
@@ -193,17 +210,16 @@ export default function ClassStudent() {
             activePointerId.current = e.pointerId;
             isDrawing.current = true;
 
-            const { x, y } = getCoordinates(e);
-
+            const coords = getCoordinates(e);
+            
             const ctx = contextRef.current;
             if (ctx) {
-                ctx.beginPath();
-                const rect = canvas.getBoundingClientRect();
                 setupContextMode();
-                ctx.moveTo(x * rect.width, y * rect.height);
+                ctx.beginPath();
+                ctx.moveTo(coords.rawX, coords.rawY);
             }
 
-            emitDrawEvent('start', { x, y });
+            emitDrawEvent('start', coords);
         };
 
         const handlePointerMove = (e) => {
@@ -212,16 +228,15 @@ export default function ClassStudent() {
 
             if (e.cancelable) e.preventDefault();
 
-            const { x, y } = getCoordinates(e);
+            const coords = getCoordinates(e);
 
             const ctx = contextRef.current;
             if (ctx) {
-                const rect = canvas.getBoundingClientRect();
-                ctx.lineTo(x * rect.width, y * rect.height);
+                ctx.lineTo(coords.rawX, coords.rawY);
                 ctx.stroke();
             }
 
-            emitDrawEvent('move', { x, y });
+            emitDrawEvent('move', coords);
         };
 
         const handlePointerUp = (e) => {
@@ -233,8 +248,8 @@ export default function ClassStudent() {
             isDrawing.current = false;
             activePointerId.current = null;
 
-            const { x, y } = getCoordinates(e);
-            emitDrawEvent('end', { x, y });
+            const coords = getCoordinates(e);
+            emitDrawEvent('end', coords);
         };
 
         const handleTouchStart = (e) => {
@@ -259,6 +274,7 @@ export default function ClassStudent() {
             canvas.removeEventListener('touchstart', handleTouchStart);
         };
     }, [joined, getCoordinates, setupContextMode, emitDrawEvent]);
+
 
     const clearCanvas = () => {
         const ctx = contextRef.current;
