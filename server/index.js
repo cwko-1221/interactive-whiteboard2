@@ -85,18 +85,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Forward student canvas aspect ratio to teacher
-    socket.on('canvas-ratio', (data) => {
-        const roomId = socket.data.roomId;
-        if (roomId && !socket.data.isTeacher) {
-            socket.to(roomId).emit('canvas-ratio', {
-                studentId: socket.id,
-                width: data.width,
-                height: data.height,
-            });
-        }
-    });
-
     // Handle student clearing their own board
     socket.on('student-clear', () => {
         const roomId = socket.data.roomId;

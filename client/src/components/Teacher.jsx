@@ -6,8 +6,8 @@ import styles from './Teacher.module.css';
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3001';
 const STUDENTS_PER_PAGE = 12;
-const DEFAULT_OFFSCREEN_WIDTH = 800;
-const DEFAULT_OFFSCREEN_HEIGHT = 600;
+const OFFSCREEN_WIDTH = 800;
+const OFFSCREEN_HEIGHT = 600;
 
 export default function Teacher() {
     const [searchParams] = useSearchParams();
@@ -25,7 +25,6 @@ export default function Teacher() {
     const offscreenCanvasesRef = useRef(new Map());
     // Map<socketId, { drawing: boolean }> — track per-student drawing state for beginPath
     const drawStateRef = useRef(new Map());
-    const studentRatiosRef = useRef(new Map()); // studentId -> { width, height }
 
     // Refs for visible grid canvases
     const gridCanvasRefs = useRef(new Map());
@@ -33,19 +32,17 @@ export default function Teacher() {
     const zoomCanvasRef = useRef(null);
     const animFrameRef = useRef(null);
 
-    const getOrCreateOffscreen = useCallback((studentId, w, h) => {
-        const offW = w || DEFAULT_OFFSCREEN_WIDTH;
-        const offH = h || DEFAULT_OFFSCREEN_HEIGHT;
+    const getOrCreateOffscreen = useCallback((studentId) => {
         if (!offscreenCanvasesRef.current.has(studentId)) {
             const canvas = document.createElement('canvas');
-            canvas.width = offW;
-            canvas.height = offH;
+            canvas.width = OFFSCREEN_WIDTH;
+            canvas.height = OFFSCREEN_HEIGHT;
             const ctx = canvas.getContext('2d');
             ctx.lineCap = 'round';
             ctx.lineJoin = 'round';
             // White background
             ctx.fillStyle = '#ffffff';
-            ctx.fillRect(0, 0, offW, offH);
+            ctx.fillRect(0, 0, OFFSCREEN_WIDTH, OFFSCREEN_HEIGHT);
             offscreenCanvasesRef.current.set(studentId, { canvas, ctx });
         }
         return offscreenCanvasesRef.current.get(studentId);
@@ -73,39 +70,13 @@ export default function Teacher() {
             }
         });
 
-        // Handle canvas aspect ratio from students
-        socketRef.current.on('canvas-ratio', ({ studentId, width, height }) => {
-            if (!studentId || !width || !height) return;
-            studentRatiosRef.current.set(studentId, { width, height });
-
-            // If offscreen canvas exists but had different dimensions, recreate it
-            if (offscreenCanvasesRef.current.has(studentId)) {
-                const existing = offscreenCanvasesRef.current.get(studentId);
-                const targetW = Math.round(width);
-                const targetH = Math.round(height);
-                if (existing.canvas.width !== targetW || existing.canvas.height !== targetH) {
-                    const newCanvas = document.createElement('canvas');
-                    newCanvas.width = targetW;
-                    newCanvas.height = targetH;
-                    const newCtx = newCanvas.getContext('2d');
-                    newCtx.lineCap = 'round';
-                    newCtx.lineJoin = 'round';
-                    newCtx.drawImage(existing.canvas, 0, 0, targetW, targetH);
-                    offscreenCanvasesRef.current.set(studentId, { canvas: newCanvas, ctx: newCtx });
-                }
-            }
-        });
-
         socketRef.current.on('draw', (data) => {
             const { studentId, x, y, state, color, size, isEraser } = data;
             if (!studentId) return;
 
-            const ratio = studentRatiosRef.current.get(studentId);
-            const offW = ratio ? Math.round(ratio.width) : DEFAULT_OFFSCREEN_WIDTH;
-            const offH = ratio ? Math.round(ratio.height) : DEFAULT_OFFSCREEN_HEIGHT;
-            const { ctx } = getOrCreateOffscreen(studentId, offW, offH);
-            const localX = x * offW;
-            const localY = y * offH;
+            const { ctx } = getOrCreateOffscreen(studentId);
+            const localX = x * OFFSCREEN_WIDTH;
+            const localY = y * OFFSCREEN_HEIGHT;
 
             if (state === 'start') {
                 ctx.beginPath();
@@ -129,21 +100,21 @@ export default function Teacher() {
 
         socketRef.current.on('student-clear', ({ studentId }) => {
             if (offscreenCanvasesRef.current.has(studentId)) {
-                const { canvas, ctx } = offscreenCanvasesRef.current.get(studentId);
+                const { ctx } = offscreenCanvasesRef.current.get(studentId);
                 ctx.globalCompositeOperation = 'source-over';
-                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.clearRect(0, 0, OFFSCREEN_WIDTH, OFFSCREEN_HEIGHT);
                 ctx.fillStyle = '#ffffff';
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillRect(0, 0, OFFSCREEN_WIDTH, OFFSCREEN_HEIGHT);
             }
         });
 
         socketRef.current.on('clear-board', () => {
             // Clear all offscreen canvases
-            for (const [, { canvas, ctx }] of offscreenCanvasesRef.current) {
+            for (const [, { ctx }] of offscreenCanvasesRef.current) {
                 ctx.globalCompositeOperation = 'source-over';
-                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.clearRect(0, 0, OFFSCREEN_WIDTH, OFFSCREEN_HEIGHT);
                 ctx.fillStyle = '#ffffff';
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillRect(0, 0, OFFSCREEN_WIDTH, OFFSCREEN_HEIGHT);
             }
         });
 
@@ -172,21 +143,7 @@ export default function Teacher() {
                 }
 
                 ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
-
-                // Calculate aspect-ratio-preserving draw area ("contain" fit)
-                const srcW = offscreen.canvas.width;
-                const srcH = offscreen.canvas.height;
-                const dstW = canvasEl.width;
-                const dstH = canvasEl.height;
-                const scale = Math.min(dstW / srcW, dstH / srcH);
-                const drawW = srcW * scale;
-                const drawH = srcH * scale;
-                const offsetX = (dstW - drawW) / 2;
-                const offsetY = (dstH - drawH) / 2;
-
-                ctx.fillStyle = '#f0f2f5';
-                ctx.fillRect(0, 0, canvasEl.width, canvasEl.height);
-                ctx.drawImage(offscreen.canvas, offsetX, offsetY, drawW, drawH);
+                ctx.drawImage(offscreen.canvas, 0, 0, canvasEl.width, canvasEl.height);
             }
 
             // Render zoom canvas
@@ -204,21 +161,7 @@ export default function Teacher() {
                     }
 
                     ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
-
-                    // Calculate aspect-ratio-preserving draw area
-                    const srcW = offscreen.canvas.width;
-                    const srcH = offscreen.canvas.height;
-                    const dstW = canvasEl.width;
-                    const dstH = canvasEl.height;
-                    const scale = Math.min(dstW / srcW, dstH / srcH);
-                    const drawW = srcW * scale;
-                    const drawH = srcH * scale;
-                    const offsetX = (dstW - drawW) / 2;
-                    const offsetY = (dstH - drawH) / 2;
-
-                    ctx.fillStyle = '#f0f2f5';
-                    ctx.fillRect(0, 0, canvasEl.width, canvasEl.height);
-                    ctx.drawImage(offscreen.canvas, offsetX, offsetY, drawW, drawH);
+                    ctx.drawImage(offscreen.canvas, 0, 0, canvasEl.width, canvasEl.height);
                 }
             }
 
