@@ -123,6 +123,11 @@ export default function ClassStudent() {
 
                 // Also resize the background canvas
                 drawBackground();
+
+                // Send canvas aspect ratio to teacher so offscreen canvas matches
+                if (socketRef.current && rect.width > 0 && rect.height > 0) {
+                    socketRef.current.emit('canvas-ratio', { width: rect.width, height: rect.height });
+                }
             };
 
             handleResize();
