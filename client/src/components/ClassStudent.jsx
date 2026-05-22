@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { io } from 'socket.io-client';
-import { Pen, Eraser, Trash2 } from 'lucide-react';
+import { Pen, Eraser, Trash2, Lock } from 'lucide-react';
 import styles from './ClassStudent.module.css';
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3001';
@@ -13,6 +13,7 @@ export default function ClassStudent() {
     const [name, setName] = useState('');
     const [joined, setJoined] = useState(false);
     const [error, setError] = useState('');
+    const [locked, setLocked] = useState(false);
 
     const [activeTool, setActiveTool] = useState('pen');
     const isDrawing = useRef(false);
@@ -87,6 +88,16 @@ export default function ClassStudent() {
                 ctx.clearRect(0, 0, rect.width, rect.height);
                 // Background canvas is untouched — image stays visible
             }
+        });
+
+        // Handle teacher locking boards
+        socket.on('lock-board', () => {
+            setLocked(true);
+        });
+
+        // Handle teacher unlocking boards
+        socket.on('unlock-board', () => {
+            setLocked(false);
         });
 
         // Setup DRAWING Canvas (transparent — strokes only)
@@ -209,6 +220,12 @@ export default function ClassStudent() {
 
             activePointerId.current = e.pointerId;
             isDrawing.current = true;
+
+            // Block drawing when locked
+            if (locked) {
+                isDrawing.current = false;
+                return;
+            }
 
             const coords = getCoordinates(e);
             
@@ -406,7 +423,18 @@ export default function ClassStudent() {
             <canvas
                 ref={canvasRef}
                 className={styles.canvas}
+                style={locked ? { pointerEvents: 'none' } : {}}
             />
+
+            {/* Lock Overlay */}
+            {locked && (
+                <div className={styles.lockOverlay}>
+                    <div className={styles.lockContent}>
+                        <Lock size={64} strokeWidth={1.5} />
+                        <p>Board Locked by Teacher</p>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

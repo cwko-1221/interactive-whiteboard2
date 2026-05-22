@@ -20,6 +20,7 @@ export default function Teacher() {
     const [page, setPage] = useState(0);
     const [zoomedStudent, setZoomedStudent] = useState(null); // socketId or null
     const [showLargeQR, setShowLargeQR] = useState(false);
+    const [locked, setLocked] = useState(false);
 
     // Map<socketId, { canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D }>
     const offscreenCanvasesRef = useRef(new Map());
@@ -191,6 +192,17 @@ export default function Teacher() {
         }
     };
 
+    const toggleLock = () => {
+        if (socketRef.current) {
+            if (locked) {
+                socketRef.current.emit('unlock-board');
+            } else {
+                socketRef.current.emit('lock-board');
+            }
+            setLocked(!locked);
+        }
+    };
+
     const joinUrl = `${window.location.origin}/student?room=${roomId}`;
 
     const zoomedStudentName = zoomedStudent
@@ -213,6 +225,13 @@ export default function Teacher() {
                 </div>
 
                 <div className={styles.headerRight}>
+                    <button
+                        className={locked ? styles.unlockBtn : styles.lockBtn}
+                        onClick={toggleLock}
+                    >
+                        {locked ? '🔓 Unlock' : '🔒 Lock'}
+                    </button>
+
                     <button className={styles.clearBtn} onClick={clearAllBoards}>
                         Clear All Boards
                     </button>

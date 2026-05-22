@@ -23,6 +23,7 @@ export default function ClassTeacher() {
     const [showLargeQR, setShowLargeQR] = useState(false);
     const [uploadedImage, setUploadedImage] = useState(null); // base64 string
     const [uploading, setUploading] = useState(false);
+    const [locked, setLocked] = useState(false);
 
     // Offscreen canvases
     const offscreenCanvasesRef = useRef(new Map());
@@ -199,6 +200,17 @@ export default function ClassTeacher() {
         }
     };
 
+    const toggleLock = () => {
+        if (socketRef.current) {
+            if (locked) {
+                socketRef.current.emit('unlock-board');
+            } else {
+                socketRef.current.emit('lock-board');
+            }
+            setLocked(!locked);
+        }
+    };
+
     const handleUploadClick = () => {
         fileInputRef.current?.click();
     };
@@ -275,6 +287,13 @@ export default function ClassTeacher() {
                         style={{ display: 'none' }}
                         onChange={handleFileChange}
                     />
+
+                    <button
+                        className={locked ? styles.unlockBtn : styles.lockBtn}
+                        onClick={toggleLock}
+                    >
+                        {locked ? '🔓 Unlock' : '🔒 Lock'}
+                    </button>
 
                     <button className={styles.clearBtn} onClick={clearAllBoards}>
                         Clear All

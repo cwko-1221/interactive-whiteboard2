@@ -20,7 +20,7 @@ const rooms = new Map(); // roomId -> { teacherSocket, students: Map<socketId, n
 
 function getRoom(roomId) {
     if (!rooms.has(roomId)) {
-        rooms.set(roomId, { teacherSocket: null, students: new Map(), image: null, type: 'whiteboard' });
+        rooms.set(roomId, { teacherSocket: null, students: new Map(), image: null, type: 'whiteboard', locked: false });
     }
     return rooms.get(roomId);
 }
@@ -68,6 +68,11 @@ io.on('connection', (socket) => {
             if (room.image) {
                 socket.emit('room-image', room.image);
             }
+
+            // If the room is locked, notify the new student
+            if (room.locked) {
+                socket.emit('lock-board');
+            }
         }
 
         socket.to(roomId).emit('user-joined', { name, isTeacher });
@@ -101,6 +106,34 @@ io.on('connection', (socket) => {
         const roomId = socket.data.roomId;
         if (roomId) {
             io.to(roomId).emit('clear-board');
+        }
+    });
+
+    // Handle teacher locking all student boards
+    socket.on('lock-board', () => {
+        const roomId = socket.data.roomId;
+        if (roomId && socket.data.isTeacher) {
+            const room = rooms.get(roomId);
+            if (room) {
+                room.locked = true;
+            }
+            // Broadcast to students only (not teacher)
+            socket.to(roomId).emit('lock-board');
+            console.log(`Room ${roomId} locked by teacher`);
+        }
+    });
+
+    // Handle teacher unlocking all student boards
+    socket.on('unlock-board', () => {
+        const roomId = socket.data.roomId;
+        if (roomId && socket.data.isTeacher) {
+            const room = rooms.get(roomId);
+            if (room) {
+                room.locked = false;
+            }
+            // Broadcast to students only (not teacher)
+            socket.to(roomId).emit('unlock-board');
+            console.log(`Room ${roomId} unlocked by teacher`);
         }
     });
 
