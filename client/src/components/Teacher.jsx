@@ -467,6 +467,20 @@ export default function Teacher() {
                                     className={`${styles.zoomToolBtn} ${teacherActiveTool === 'eraser' ? styles.zoomToolActive : ''}`}
                                     onClick={() => setTeacherActiveTool('eraser')}
                                 >Eraser</button>
+                                {zoomedStudent === 'teacher' && (
+                                    <button 
+                                        className={styles.zoomToolBtn}
+                                        onClick={() => {
+                                            const offscreen = teacherOffscreenRef.current;
+                                            if (offscreen) {
+                                                const { ctx, canvas } = offscreen;
+                                                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                                                ctx.fillStyle = '#ffffff';
+                                                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                                            }
+                                        }}
+                                    >Clear</button>
+                                )}
                             </div>
                             <button className={styles.closeZoomBtn} onClick={() => setZoomedStudent(null)}>×</button>
                         </div>
