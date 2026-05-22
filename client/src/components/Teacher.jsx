@@ -44,7 +44,7 @@ export default function Teacher() {
     useEffect(() => {
         const canvas = document.createElement('canvas');
         canvas.width = 1200;
-        canvas.height = 800;
+        canvas.height = 900;
         const ctx = canvas.getContext('2d');
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
@@ -254,19 +254,8 @@ export default function Teacher() {
             
         if (!offscreen) return null;
         
-        const srcW = offscreen.canvas.width;
-        const srcH = offscreen.canvas.height;
-        const dstW = rect.width;
-        const dstH = rect.height;
-        
-        const scale = Math.min(dstW / srcW, dstH / srcH);
-        const drawW = srcW * scale;
-        const drawH = srcH * scale;
-        const offsetX = (dstW - drawW) / 2;
-        const offsetY = (dstH - drawH) / 2;
-        
-        const normX = (cssX - offsetX) / drawW;
-        const normY = (cssY - offsetY) / drawH;
+        const normX = cssX / rect.width;
+        const normY = cssY / rect.height;
         
         return { normX, normY, offscreen };
     };

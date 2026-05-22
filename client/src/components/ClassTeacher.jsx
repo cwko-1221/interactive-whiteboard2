@@ -58,7 +58,7 @@ export default function ClassTeacher() {
     useEffect(() => {
         const canvas = document.createElement('canvas');
         canvas.width = 1200;
-        canvas.height = 800;
+        canvas.height = 900;
         const ctx = canvas.getContext('2d');
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
