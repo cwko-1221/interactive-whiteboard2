@@ -368,7 +368,8 @@ export default function ClassStudent() {
 
     return (
         <div className={styles.container}>
-            {/* Toolbar */}
+            {/* Toolbar - hidden when locked */}
+            {!locked && (
             <div className={styles.toolbar}>
                 <button
                     className={`${styles.toolBtn} ${activeTool === 'pen' ? styles.active : ''}`}
@@ -413,6 +414,7 @@ export default function ClassStudent() {
                     </div>
                 </div>
             </div>
+            )}
 
             {/* Background image canvas (bottom layer) */}
             <canvas

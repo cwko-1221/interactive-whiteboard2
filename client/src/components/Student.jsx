@@ -323,7 +323,8 @@ export default function Student() {
 
     return (
         <div className={styles.container}>
-            {/* Toolbar - Floating */}
+            {/* Toolbar - hidden when locked */}
+            {!locked && (
             <div className={styles.toolbar}>
                 <button
                     className={`${styles.toolBtn} ${activeTool === 'pen' ? styles.active : ''}`}
@@ -368,6 +369,7 @@ export default function Student() {
                     </div>
                 </div>
             </div>
+            )}
 
             {/* Canvas — event listeners attached natively via useEffect above */}
             <canvas
