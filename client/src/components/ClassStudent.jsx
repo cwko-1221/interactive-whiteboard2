@@ -19,6 +19,8 @@ export default function ClassStudent() {
     const isDrawing = useRef(false);
     const activePointerId = useRef(null);
     const activeToolRef = useRef(activeTool);
+    const studentLastPos = useRef({ x: 0, y: 0 });
+    const teacherLastPos = useRef({ x: 0, y: 0 });
 
     const bgCanvasRef = useRef(null);   // Background image layer (bottom)
     const canvasRef = useRef(null);      // Drawing layer (top, transparent)
@@ -98,6 +100,46 @@ export default function ClassStudent() {
         // Handle teacher unlocking boards
         socket.on('unlock-board', () => {
             setLocked(false);
+        });
+
+        // Handle teacher drawing on this student's board
+        socket.on('teacher-draw', (data) => {
+            const ctx = contextRef.current;
+            const canvas = canvasRef.current;
+            if (!ctx || !canvas) return;
+
+            ctx.save();
+            const { x, y, state, color, size, isEraser } = data;
+            const rect = canvas.getBoundingClientRect();
+            const cssX = x * rect.width;
+            const cssY = y * rect.height;
+
+            if (isEraser) {
+                ctx.globalCompositeOperation = 'destination-out';
+                ctx.lineWidth = size * 2;
+            } else {
+                ctx.globalCompositeOperation = 'source-over';
+                ctx.strokeStyle = color;
+                ctx.lineWidth = size;
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+            }
+
+            if (state === 'start') {
+                ctx.beginPath();
+                ctx.moveTo(cssX, cssY);
+                ctx.lineTo(cssX, cssY);
+                ctx.stroke();
+                teacherLastPos.current = { x: cssX, y: cssY };
+            } else if (state === 'move') {
+                ctx.beginPath();
+                ctx.moveTo(teacherLastPos.current.x, teacherLastPos.current.y);
+                ctx.lineTo(cssX, cssY);
+                ctx.stroke();
+                teacherLastPos.current = { x: cssX, y: cssY };
+            }
+            
+            ctx.restore();
         });
 
         // Setup DRAWING Canvas (transparent — strokes only)
@@ -228,12 +270,15 @@ export default function ClassStudent() {
             }
 
             const coords = getCoordinates(e);
+            studentLastPos.current = { x: coords.rawX, y: coords.rawY };
             
             const ctx = contextRef.current;
             if (ctx) {
                 setupContextMode();
                 ctx.beginPath();
                 ctx.moveTo(coords.rawX, coords.rawY);
+                ctx.lineTo(coords.rawX, coords.rawY); // dot
+                ctx.stroke();
             }
 
             emitDrawEvent('start', coords);
@@ -249,8 +294,12 @@ export default function ClassStudent() {
 
             const ctx = contextRef.current;
             if (ctx) {
+                setupContextMode();
+                ctx.beginPath();
+                ctx.moveTo(studentLastPos.current.x, studentLastPos.current.y);
                 ctx.lineTo(coords.rawX, coords.rawY);
                 ctx.stroke();
+                studentLastPos.current = { x: coords.rawX, y: coords.rawY };
             }
 
             emitDrawEvent('move', coords);

@@ -19,6 +19,8 @@ export default function Student() {
     const isDrawing = useRef(false);
     const activePointerId = useRef(null);
     const activeToolRef = useRef(activeTool);
+    const studentLastPos = useRef({ x: 0, y: 0 });
+    const teacherLastPos = useRef({ x: 0, y: 0 });
 
     const canvasRef = useRef(null);
     const contextRef = useRef(null);
@@ -62,6 +64,46 @@ export default function Student() {
         // Handle teacher unlocking boards
         socketRef.current.on('unlock-board', () => {
             setLocked(false);
+        });
+
+        // Handle teacher drawing on this student's board
+        socketRef.current.on('teacher-draw', (data) => {
+            const ctx = contextRef.current;
+            const canvas = canvasRef.current;
+            if (!ctx || !canvas) return;
+
+            ctx.save();
+            const { x, y, state, color, size, isEraser } = data;
+            const rect = canvas.getBoundingClientRect();
+            const cssX = x * rect.width;
+            const cssY = y * rect.height;
+
+            if (isEraser) {
+                ctx.globalCompositeOperation = 'destination-out';
+                ctx.lineWidth = size * 2;
+            } else {
+                ctx.globalCompositeOperation = 'source-over';
+                ctx.strokeStyle = color;
+                ctx.lineWidth = size;
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+            }
+
+            if (state === 'start') {
+                ctx.beginPath();
+                ctx.moveTo(cssX, cssY);
+                ctx.lineTo(cssX, cssY);
+                ctx.stroke();
+                teacherLastPos.current = { x: cssX, y: cssY };
+            } else if (state === 'move') {
+                ctx.beginPath();
+                ctx.moveTo(teacherLastPos.current.x, teacherLastPos.current.y);
+                ctx.lineTo(cssX, cssY);
+                ctx.stroke();
+                teacherLastPos.current = { x: cssX, y: cssY };
+            }
+            
+            ctx.restore();
         });
 
         // Setup Canvas
@@ -180,14 +222,15 @@ export default function Student() {
             }
 
             const coords = getCoordinates(e);
-            lastX = coords.rawX;
-            lastY = coords.rawY;
-
+            studentLastPos.current = { x: coords.rawX, y: coords.rawY };
+            
             const ctx = contextRef.current;
             if (ctx) {
                 setupContextMode();
                 ctx.beginPath();
-                ctx.moveTo(lastX, lastY);
+                ctx.moveTo(coords.rawX, coords.rawY);
+                ctx.lineTo(coords.rawX, coords.rawY); // dot
+                ctx.stroke();
             }
 
             emitDrawEvent('start', coords);
@@ -200,10 +243,15 @@ export default function Student() {
             if (e.cancelable) e.preventDefault();
 
             const coords = getCoordinates(e);
+
             const ctx = contextRef.current;
             if (ctx) {
+                setupContextMode();
+                ctx.beginPath();
+                ctx.moveTo(studentLastPos.current.x, studentLastPos.current.y);
                 ctx.lineTo(coords.rawX, coords.rawY);
                 ctx.stroke();
+                studentLastPos.current = { x: coords.rawX, y: coords.rawY };
             }
 
             emitDrawEvent('move', coords);

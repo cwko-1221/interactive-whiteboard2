@@ -90,6 +90,13 @@ io.on('connection', (socket) => {
         }
     });
 
+    // Handle teacher drawing on a student's board
+    socket.on('teacher-draw', (data) => {
+        if (socket.data.isTeacher && data.studentId) {
+            socket.to(data.studentId).emit('teacher-draw', data);
+        }
+    });
+
     // Handle student clearing their own board
     socket.on('student-clear', () => {
         const roomId = socket.data.roomId;

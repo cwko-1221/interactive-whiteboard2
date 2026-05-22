@@ -22,6 +22,14 @@ export default function Teacher() {
     const [showLargeQR, setShowLargeQR] = useState(false);
     const [locked, setLocked] = useState(false);
 
+    // Teacher drawing state
+    const [teacherActiveTool, setTeacherActiveTool] = useState('pen');
+    const isTeacherDrawing = useRef(false);
+    const teacherLastPos = useRef({ normX: 0, normY: 0 });
+
+    // Special offscreen canvas for the Teacher Board
+    const teacherOffscreenRef = useRef(null);
+
     // Map<socketId, { canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D }>
     const offscreenCanvasesRef = useRef(new Map());
     // Map<socketId, { drawing: boolean }> — track per-student drawing state for beginPath
@@ -32,6 +40,18 @@ export default function Teacher() {
     // Ref for zoomed canvas
     const zoomCanvasRef = useRef(null);
     const animFrameRef = useRef(null);
+
+    useEffect(() => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 1200;
+        canvas.height = 800;
+        const ctx = canvas.getContext('2d');
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        teacherOffscreenRef.current = { canvas, ctx };
+    }, []);
 
     const getOrCreateOffscreen = useCallback((studentId) => {
         if (!offscreenCanvasesRef.current.has(studentId)) {
@@ -149,7 +169,10 @@ export default function Teacher() {
 
             // Render zoom canvas
             if (zoomedStudent && zoomCanvasRef.current) {
-                const offscreen = offscreenCanvasesRef.current.get(zoomedStudent);
+                const offscreen = zoomedStudent === 'teacher' 
+                    ? teacherOffscreenRef.current 
+                    : offscreenCanvasesRef.current.get(zoomedStudent);
+                
                 if (offscreen) {
                     const canvasEl = zoomCanvasRef.current;
                     const ctx = canvasEl.getContext('2d');
@@ -203,11 +226,134 @@ export default function Teacher() {
         }
     };
 
+    const emitTeacherDraw = useCallback((studentId, state, normX, normY) => {
+        if (studentId === 'teacher') return; // Don't emit network events for local teacher board
+        if (socketRef.current) {
+            socketRef.current.emit('teacher-draw', {
+                studentId,
+                x: normX,
+                y: normY,
+                state,
+                color: '#ef4444', // Red for teacher
+                size: teacherActiveTool === 'eraser' ? 10 : 3,
+                isEraser: teacherActiveTool === 'eraser'
+            });
+        }
+    }, [teacherActiveTool]);
+
+    const getZoomNormCoords = (e) => {
+        const canvas = zoomCanvasRef.current;
+        const rect = canvas.getBoundingClientRect();
+        
+        const cssX = e.clientX - rect.left;
+        const cssY = e.clientY - rect.top;
+        
+        const offscreen = zoomedStudent === 'teacher' 
+            ? teacherOffscreenRef.current 
+            : offscreenCanvasesRef.current.get(zoomedStudent);
+            
+        if (!offscreen) return null;
+        
+        const srcW = offscreen.canvas.width;
+        const srcH = offscreen.canvas.height;
+        const dstW = rect.width;
+        const dstH = rect.height;
+        
+        const scale = Math.min(dstW / srcW, dstH / srcH);
+        const drawW = srcW * scale;
+        const drawH = srcH * scale;
+        const offsetX = (dstW - drawW) / 2;
+        const offsetY = (dstH - drawH) / 2;
+        
+        const normX = (cssX - offsetX) / drawW;
+        const normY = (cssY - offsetY) / drawH;
+        
+        return { normX, normY, offscreen };
+    };
+
+    const handleZoomPointerDown = (e) => {
+        if (!zoomedStudent) return;
+        if (e.cancelable) e.preventDefault();
+        
+        const coords = getZoomNormCoords(e);
+        if (!coords) return;
+        
+        isTeacherDrawing.current = true;
+        teacherLastPos.current = { normX: coords.normX, normY: coords.normY };
+        
+        const { offscreen, normX, normY } = coords;
+        const ctx = offscreen.ctx;
+        const pxX = normX * offscreen.canvas.width;
+        const pxY = normY * offscreen.canvas.height;
+        
+        ctx.beginPath();
+        if (teacherActiveTool === 'eraser') {
+            ctx.globalCompositeOperation = 'destination-out';
+            ctx.lineWidth = 20;
+        } else {
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.strokeStyle = '#ef4444';
+            ctx.lineWidth = 3;
+        }
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.moveTo(pxX, pxY);
+        ctx.lineTo(pxX, pxY);
+        ctx.stroke();
+        
+        emitTeacherDraw(zoomedStudent, 'start', normX, normY);
+    };
+
+    const handleZoomPointerMove = (e) => {
+        if (!isTeacherDrawing.current || !zoomedStudent) return;
+        if (e.cancelable) e.preventDefault();
+        
+        const coords = getZoomNormCoords(e);
+        if (!coords) return;
+        const { offscreen, normX, normY } = coords;
+        
+        const ctx = offscreen.ctx;
+        const startX = teacherLastPos.current.normX * offscreen.canvas.width;
+        const startY = teacherLastPos.current.normY * offscreen.canvas.height;
+        const endX = normX * offscreen.canvas.width;
+        const endY = normY * offscreen.canvas.height;
+        
+        ctx.beginPath();
+        if (teacherActiveTool === 'eraser') {
+            ctx.globalCompositeOperation = 'destination-out';
+            ctx.lineWidth = 20;
+        } else {
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.strokeStyle = '#ef4444';
+            ctx.lineWidth = 3;
+        }
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.moveTo(startX, startY);
+        ctx.lineTo(endX, endY);
+        ctx.stroke();
+        
+        teacherLastPos.current = { normX, normY };
+        emitTeacherDraw(zoomedStudent, 'move', normX, normY);
+    };
+
+    const handleZoomPointerUp = (e) => {
+        if (!isTeacherDrawing.current || !zoomedStudent) return;
+        if (e.cancelable) e.preventDefault();
+        
+        isTeacherDrawing.current = false;
+        
+        const coords = getZoomNormCoords(e);
+        if (coords) {
+            emitTeacherDraw(zoomedStudent, 'end', coords.normX, coords.normY);
+        }
+    };
+
     const joinUrl = `${window.location.origin}/student?room=${roomId}`;
 
-    const zoomedStudentName = zoomedStudent
-        ? students.find(s => s.socketId === zoomedStudent)?.name || 'Student'
-        : '';
+    const zoomedStudentName = zoomedStudent === 'teacher' 
+        ? '👨‍🏫 Teacher Board' 
+        : (zoomedStudent ? (students.find(s => s.socketId === zoomedStudent)?.name || 'Unknown Student') : '');
 
     return (
         <div className={styles.container}>
@@ -225,6 +371,13 @@ export default function Teacher() {
                 </div>
 
                 <div className={styles.headerRight}>
+                    <button
+                        className={styles.teachingBtn}
+                        onClick={() => setZoomedStudent('teacher')}
+                    >
+                        👨‍🏫 Teaching
+                    </button>
+
                     <button
                         className={locked ? styles.unlockBtn : styles.lockBtn}
                         onClick={toggleLock}
@@ -316,10 +469,29 @@ export default function Teacher() {
                     <div className={styles.zoomContent} onClick={e => e.stopPropagation()}>
                         <div className={styles.zoomHeader}>
                             <h2 className={styles.zoomTitle}>{zoomedStudentName}</h2>
+                            <div className={styles.zoomToolbar}>
+                                <button 
+                                    className={`${styles.zoomToolBtn} ${teacherActiveTool === 'pen' ? styles.zoomToolActive : ''}`}
+                                    onClick={() => setTeacherActiveTool('pen')}
+                                >Pen</button>
+                                <button 
+                                    className={`${styles.zoomToolBtn} ${teacherActiveTool === 'eraser' ? styles.zoomToolActive : ''}`}
+                                    onClick={() => setTeacherActiveTool('eraser')}
+                                >Eraser</button>
+                            </div>
                             <button className={styles.closeZoomBtn} onClick={() => setZoomedStudent(null)}>×</button>
                         </div>
                         <div className={styles.zoomCanvasWrapper}>
-                            <canvas ref={zoomCanvasRef} className={styles.zoomCanvas} />
+                            <canvas 
+                                ref={zoomCanvasRef} 
+                                className={styles.zoomCanvas} 
+                                onPointerDown={handleZoomPointerDown}
+                                onPointerMove={handleZoomPointerMove}
+                                onPointerUp={handleZoomPointerUp}
+                                onPointerCancel={handleZoomPointerUp}
+                                onPointerLeave={handleZoomPointerUp}
+                                style={{ touchAction: 'none' }}
+                            />
                         </div>
                     </div>
                 </div>
